@@ -98,6 +98,60 @@ const application = {
     cache: false
 };
 
+const lite = {
+    input: 'src/lite.ts',
+    output: {
+        dir: 'dist',
+        format: 'esm',
+        sourcemap: true
+    },
+    plugins: [
+        copyAndWatch({
+            targets: [
+                {
+                    src: 'src/lite.html',
+                    transform: (contents, filename) => {
+                        return contents.toString().replace('__BASE_HREF__', HREF);
+                    }
+                },
+                { src: 'static/lib', dest: 'static' }
+            ]
+        }),
+        alias({
+            entries: {
+                'playcanvas': ENGINE_DIR,
+                '@playcanvas/pcui': PCUI_DIR
+            }
+        }),
+        typescript({
+            tsconfig: './tsconfig.json'
+        }),
+        resolve(),
+        image({ dom: false }),
+        json(),
+        scss({
+            sourceMap: true,
+            runtime: sass,
+            processor: (css) => {
+                return postcss([autoprefixer])
+                .process(css, { from: undefined })
+                .then(result => result.css);
+            },
+            fileName: 'lite.css',
+            includePaths: [`${PCUI_DIR}/dist`],
+            watch: 'src/ui/scss'
+        }),
+        BUILD_TYPE === 'release' &&
+        strip({
+            include: ['**/*.ts'],
+            functions: ['Debug.exec']
+        }),
+        BUILD_TYPE !== 'debug' && terser()
+    ],
+    treeshake: 'smallest',
+    cache: false
+};
+
 const serviceWorker = {
     input: 'src/sw.ts',
     output: {
@@ -117,5 +171,6 @@ const serviceWorker = {
 
 export default [
     application,
+    lite,
     serviceWorker
 ];
