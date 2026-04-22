@@ -1,12 +1,23 @@
 import './ui/scss/style.scss';
 import { WebPCodec } from '@playcanvas/splat-transform';
-import { Color, createGraphicsDevice, Mat4, Vec3 } from 'playcanvas';
+import { Color, createGraphicsDevice, Mat4, Quat, Vec3 } from 'playcanvas';
 
+import { EditHistory } from './edit-history';
+import { EntityTransformOp, MultiOp, PlacePivotOp } from './edit-ops';
+import { EntityTransformHandler } from './entity-transform-handler';
 import { Events } from './events';
+import { BrowserFileSystem } from './io/write/browser-file-system';
+import { Pivot, registerPivotEvents } from './pivot';
 import { Scene } from './scene';
 import { getSceneConfig } from './scene-config';
+import { serializePly, serializePlyCompressed, serializeSplat, SerializeSettings } from './splat-serialize';
 import { CreateDropHandler } from './drop-handler';
 import { MappedReadFileSystem } from './io';
+import { MoveTool } from './tools/move-tool';
+import { RotateTool } from './tools/rotate-tool';
+import { ScaleTool } from './tools/scale-tool';
+import { ToolManager } from './tools/tool-manager';
+import { Transform } from './transform';
 import { Shortcuts, ShortcutBinding } from './shortcuts';
 
 declare global {
@@ -15,7 +26,7 @@ declare global {
     }
 }
 
-// Default shortcut bindings for lite version
+// Shortcut bindings for lite version
 const liteShortcuts: Record<string, ShortcutBinding> = {
     // Camera fly keys - WASD + QE
     'camera.fly.forward': { codes: ['KeyW'], held: true, shift: 'optional', alt: 'optional' },
@@ -33,11 +44,25 @@ const liteShortcuts: Record<string, ShortcutBinding> = {
     'camera.toggleControlMode': { keys: ['v'] },
     'grid.toggleVisible': { keys: ['g'] },
 
+    // Transform tools
+    'tool.move': { keys: ['1'] },
+    'tool.rotate': { keys: ['2'] },
+    'tool.scale': { keys: ['3'] },
+
     // Tool
     'tool.deactivate': { keys: ['Escape'] },
     'select.delete': { keys: ['Delete', 'Backspace'] },
-    'measure.clearAll': { keys: ['c'], shift: 'required' }
+    'measure.clearAll': { keys: ['c'], shift: 'required' },
+
+    // Undo/Redo
+    'edit.undo': { keys: ['z'], ctrl: 'required', repeat: true, capture: true },
+    'edit.redo': { keys: ['z'], ctrl: 'required', shift: 'required', repeat: true, capture: true },
+
+    // Coord space toggle
+    'tool.toggleCoordSpace': { keys: ['c'], shift: 'required' }
 };
+
+type ExportFormat = 'ply' | 'compressedPly' | 'splat';
 
 const main = async () => {
     // root events object
@@ -63,7 +88,7 @@ const main = async () => {
         });
     }
 
-    // shortcutManager stub (needed by some modules)
+    // shortcutManager stub
     const shortcutManager = {
         register: () => {},
         get: (): any => undefined,
@@ -81,6 +106,11 @@ const main = async () => {
     const openFileBtn = document.getElementById('open-file-btn')!;
     const measureBtn = document.getElementById('measure-btn')!;
     const clearMeasureBtn = document.getElementById('clear-measure-btn')!;
+    const moveBtn = document.getElementById('move-btn')!;
+    const rotateBtn = document.getElementById('rotate-btn')!;
+    const scaleBtn = document.getElementById('scale-btn')!;
+    const exportBtn = document.getElementById('export-btn')!;
+    const exportMenu = document.getElementById('export-menu')!;
 
     // create the graphics device
     const graphicsDevice = await createGraphicsDevice(canvas, {
@@ -103,7 +133,13 @@ const main = async () => {
         graphicsDevice
     );
 
-    // colors
+    // ===== PIVOT SYSTEM (real, from original project) =====
+    registerPivotEvents(events);
+
+    // ===== EDIT HISTORY =====
+    const editHistory = new EditHistory(events);
+
+    // ===== COLORS =====
     const bgClr = new Color();
     const selectedClr = new Color();
     const unselectedClr = new Color();
@@ -139,7 +175,6 @@ const main = async () => {
     events.on('unselectedClr', () => { scene.forceRender = true; });
     events.on('lockedClr', () => { scene.forceRender = true; });
 
-    // initialize colors from config
     const toColor = (value: { r: number, g: number, b: number, a: number }) => {
         return new Color(value.r, value.g, value.b, value.a);
     };
@@ -148,13 +183,54 @@ const main = async () => {
     setUnselectedClr(toColor(sceneConfig.unselectedClr));
     setLockedClr(toColor(sceneConfig.lockedClr));
 
-    // minimal editor events (only what's needed for camera, grid, and measure)
+    // ===== SELECTION SUPPORT =====
+    let currentSplat: any = null;
+    events.function('selection', () => currentSplat);
+    events.on('selection.changed', (splat: any) => {
+        currentSplat = splat;
+    });
+
+    events.function('scene.allSplats', () => scene.getElementsByType('splat' as any));
+    events.function('scene.splats', () => {
+        return (scene.getElementsByType('splat' as any) as any[])
+            .filter((s: any) => s.visible && s.numSplats > 0);
+    });
+    events.function('scene.empty', () => {
+        return events.invoke('scene.splats').length === 0;
+    });
+
+    // ===== TRANSFORM HANDLER (entity-level, from original project) =====
+    const entityTransformHandler = new EntityTransformHandler(events);
+    events.on('transformHandler.push', (handler: any) => {
+        handler.activate();
+    });
+    events.on('transformHandler.pop', () => {
+        entityTransformHandler.deactivate();
+    });
+
+    // ===== EDIT EVENTS =====
     registerMinimalEditorEvents(events, scene);
+
+    // ===== TOOL MANAGER (real, from original project) =====
+    const toolManager = new ToolManager(events);
+
+    // Register transform tools
+    toolManager.register('move', new MoveTool(events, scene));
+    toolManager.register('rotate', new RotateTool(events, scene));
+    toolManager.register('scale', new ScaleTool(events, scene));
+
+    // Push/pop entity transform handler when transform tools activate/deactivate
+    events.on('tool.move.activated', () => { entityTransformHandler.activate(); });
+    events.on('tool.rotate.activated', () => { entityTransformHandler.activate(); });
+    events.on('tool.scale.activated', () => { entityTransformHandler.activate(); });
+    events.on('tool.move.deactivated', () => { entityTransformHandler.deactivate(); });
+    events.on('tool.rotate.deactivated', () => { entityTransformHandler.deactivate(); });
+    events.on('tool.scale.deactivated', () => { entityTransformHandler.deactivate(); });
 
     // ===== CUSTOM MEASURE TOOL (multi-point, no gizmo) =====
     const measureState = {
         active: false,
-        points: [] as Vec3[]     // world-space measure points
+        points: [] as Vec3[]
     };
 
     // Create SVG overlay for measure visualization
@@ -165,62 +241,70 @@ const main = async () => {
 
     const ns = svg.namespaceURI!;
 
-    // Create defs with arrow marker
+    // Create defs
     const defs = document.createElementNS(ns, 'defs');
 
-    // Arrow marker for direction indication
-    const marker = document.createElementNS(ns, 'marker');
-    marker.setAttribute('id', 'arrowhead');
-    marker.setAttribute('markerWidth', '10');
-    marker.setAttribute('markerHeight', '7');
-    marker.setAttribute('refX', '10');
-    marker.setAttribute('refY', '3.5');
-    marker.setAttribute('orient', 'auto');
-    const markerPolygon = document.createElementNS(ns, 'polygon');
-    markerPolygon.setAttribute('points', '0 0, 10 3.5, 0 7');
-    markerPolygon.setAttribute('fill', '#ff6600');
-    marker.appendChild(markerPolygon);
-    defs.appendChild(marker);
-
-    // Line template
+    // Line template - thicker for better visibility
     const lineTemplate = document.createElementNS(ns, 'line') as SVGLineElement;
     lineTemplate.id = 'measure-line';
     lineTemplate.setAttribute('stroke', '#ff6600');
-    lineTemplate.setAttribute('stroke-width', '2');
+    lineTemplate.setAttribute('stroke-width', '3');
     defs.appendChild(lineTemplate);
 
     svg.appendChild(defs);
 
-    // We'll dynamically create line/circle elements per segment
+    // Dynamic SVG elements
     const svgLines: SVGUseElement[] = [];
     const svgCircles: SVGCircleElement[] = [];
     const svgLabels: SVGTextElement[] = [];
+    const svgHitAreas: SVGRectElement[] = [];  // transparent hit areas for hover detection
 
     const ensureSvgElements = () => {
-        // Ensure we have enough SVG elements for current points
-        // Each segment needs a line, each point needs a circle
-        // Between each pair of consecutive points, show distance label
-
-        // Circles for points
+        // Circles for points - larger radius for visibility
         while (svgCircles.length < measureState.points.length) {
             const circle = document.createElementNS(ns, 'circle') as SVGCircleElement;
-            circle.setAttribute('r', '5');
+            circle.setAttribute('r', '8');
             circle.setAttribute('fill', '#ff6600');
             circle.setAttribute('stroke', '#fff');
-            circle.setAttribute('stroke-width', '1');
+            circle.setAttribute('stroke-width', '2');
             circle.style.cursor = 'pointer';
             circle.style.pointerEvents = 'auto';
             svg.appendChild(circle);
             svgCircles.push(circle);
         }
-        // Remove excess circles
         while (svgCircles.length > measureState.points.length) {
             const c = svgCircles.pop()!;
             svg.removeChild(c);
         }
 
-        // Lines between consecutive points (n-1 lines for n points)
         const lineCount = Math.max(0, measureState.points.length - 1);
+
+        // Hit areas for lines (transparent wider rects for hover detection)
+        while (svgHitAreas.length < lineCount) {
+            const hitArea = document.createElementNS(ns, 'rect') as SVGRectElement;
+            hitArea.setAttribute('fill', 'transparent');
+            hitArea.setAttribute('stroke', 'none');
+            hitArea.style.cursor = 'pointer';
+            hitArea.style.pointerEvents = 'stroke';
+            hitArea.setAttribute('stroke-width', '16');
+            hitArea.setAttribute('stroke', 'transparent');
+            // Store reference to corresponding label index
+            const idx = svgHitAreas.length;
+            hitArea.addEventListener('pointerenter', () => {
+                if (svgLabels[idx]) svgLabels[idx].setAttribute('visibility', 'visible');
+            });
+            hitArea.addEventListener('pointerleave', () => {
+                if (svgLabels[idx]) svgLabels[idx].setAttribute('visibility', 'hidden');
+            });
+            svg.appendChild(hitArea);
+            svgHitAreas.push(hitArea);
+        }
+        while (svgHitAreas.length > lineCount) {
+            const h = svgHitAreas.pop()!;
+            svg.removeChild(h);
+        }
+
+        // Lines between consecutive points
         while (svgLines.length < lineCount) {
             const lineUse = document.createElementNS(ns, 'use') as SVGUseElement;
             lineUse.setAttribute('href', '#measure-line');
@@ -232,21 +316,23 @@ const main = async () => {
             svg.removeChild(l);
         }
 
-        // Distance labels between consecutive points
-        const labelCount = lineCount;
-        while (svgLabels.length < labelCount) {
+        // Distance labels (hidden by default, shown on hover)
+        while (svgLabels.length < lineCount) {
             const text = document.createElementNS(ns, 'text') as SVGTextElement;
             text.setAttribute('fill', '#fff');
-            text.setAttribute('font-size', '12');
+            text.setAttribute('font-size', '13');
+            text.setAttribute('font-weight', 'bold');
             text.setAttribute('font-family', 'monospace');
             text.setAttribute('text-anchor', 'middle');
             text.setAttribute('stroke', '#000');
-            text.setAttribute('stroke-width', '2');
+            text.setAttribute('stroke-width', '3');
             text.setAttribute('paint-order', 'stroke');
+            text.setAttribute('visibility', 'hidden');  // hidden by default
+            text.style.pointerEvents = 'none';
             svg.appendChild(text);
             svgLabels.push(text);
         }
-        while (svgLabels.length > labelCount) {
+        while (svgLabels.length > lineCount) {
             const t = svgLabels.pop()!;
             svg.removeChild(t);
         }
@@ -265,7 +351,6 @@ const main = async () => {
     const updateMeasureVisuals = () => {
         ensureSvgElements();
 
-        // Update circles
         for (let i = 0; i < measureState.points.length; i++) {
             const screen = worldToScreen(measureState.points[i]);
             if (screen) {
@@ -277,7 +362,6 @@ const main = async () => {
             }
         }
 
-        // Update lines and labels
         for (let i = 0; i < measureState.points.length - 1; i++) {
             const screenA = worldToScreen(measureState.points[i]);
             const screenB = worldToScreen(measureState.points[i + 1]);
@@ -288,22 +372,38 @@ const main = async () => {
                 svgLines[i].setAttribute('y2', screenB.y.toString());
                 svgLines[i].setAttribute('visibility', 'visible');
 
-                // Distance label
+                // Distance label at midpoint
                 const dist = measureState.points[i].distance(measureState.points[i + 1]);
                 const midX = (screenA.x + screenB.x) / 2;
                 const midY = (screenA.y + screenB.y) / 2;
                 svgLabels[i].setAttribute('x', midX.toString());
-                svgLabels[i].setAttribute('y', (midY - 8).toString());
+                svgLabels[i].setAttribute('y', (midY - 10).toString());
                 svgLabels[i].textContent = `${dist.toFixed(3)}m`;
-                svgLabels[i].setAttribute('visibility', 'visible');
+
+                // Hit area - line between two points
+                const dx = screenB.x - screenA.x;
+                const dy = screenB.y - screenA.y;
+                const len = Math.sqrt(dx * dx + dy * dy);
+                if (len > 0) {
+                    // Use a rotated rect as hit area along the line
+                    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+                    const cx = midX;
+                    const cy = midY;
+                    svgHitAreas[i].setAttribute('x', (cx - len / 2).toString());
+                    svgHitAreas[i].setAttribute('y', (cy - 8).toString());
+                    svgHitAreas[i].setAttribute('width', len.toString());
+                    svgHitAreas[i].setAttribute('height', '16');
+                    svgHitAreas[i].setAttribute('transform', `rotate(${angle},${cx},${cy})`);
+                    svgHitAreas[i].style.pointerEvents = 'fill';
+                }
             } else {
                 svgLines[i].setAttribute('visibility', 'hidden');
                 svgLabels[i].setAttribute('visibility', 'hidden');
+                svgHitAreas[i].style.pointerEvents = 'none';
             }
         }
     };
 
-    // Delete last measure point
     const deleteLastMeasurePoint = () => {
         if (measureState.points.length > 0) {
             const removed = measureState.points.pop()!;
@@ -313,7 +413,6 @@ const main = async () => {
         }
     };
 
-    // Clear all measure points
     const clearAllMeasurePoints = () => {
         measureState.points = [];
         updateMeasureVisuals();
@@ -341,11 +440,10 @@ const main = async () => {
         if (!measureClicked || !isPrimary(e)) return;
         measureClicked = false;
 
-        // Check if click is near an existing point (for selection/deletion)
+        // Check if click is near an existing point (for deletion)
         for (let i = 0; i < measureState.points.length; i++) {
             const screen = worldToScreen(measureState.points[i]);
-            if (screen && Math.abs(screen.x - e.offsetX) < 10 && Math.abs(screen.y - e.offsetY) < 10) {
-                // Click near existing point - delete it
+            if (screen && Math.abs(screen.x - e.offsetX) < 12 && Math.abs(screen.y - e.offsetY) < 12) {
                 const removed = measureState.points.splice(i, 1)[0];
                 console.log(`[Measure] Deleted point ${i}: (${removed.x.toFixed(4)}, ${removed.y.toFixed(4)}, ${removed.z.toFixed(4)})`);
                 console.log(`[Measure] Remaining points: ${measureState.points.length}`);
@@ -366,16 +464,10 @@ const main = async () => {
             measureState.points.push(worldPos);
             console.log(`[Measure] Point ${measureState.points.length}: (${worldPos.x.toFixed(4)}, ${worldPos.y.toFixed(4)}, ${worldPos.z.toFixed(4)})`);
 
-            // Calculate total distance
             if (measureState.points.length >= 2) {
-                const lastTwo = [
-                    measureState.points[measureState.points.length - 2],
-                    measureState.points[measureState.points.length - 1]
-                ];
-                const segDist = lastTwo[0].distance(lastTwo[1]);
+                const segDist = measureState.points[measureState.points.length - 2].distance(measureState.points[measureState.points.length - 1]);
                 console.log(`[Measure] Segment distance: ${segDist.toFixed(4)}m`);
 
-                // Total path distance
                 let totalDist = 0;
                 for (let i = 0; i < measureState.points.length - 1; i++) {
                     totalDist += measureState.points[i].distance(measureState.points[i + 1]);
@@ -390,7 +482,7 @@ const main = async () => {
         e.stopPropagation();
     };
 
-    // Activate measure tool
+    // Measure tool activate/deactivate
     const activateMeasure = () => {
         measureState.active = true;
         canvasContainer.addEventListener('pointerdown', measurePointerdown);
@@ -401,10 +493,12 @@ const main = async () => {
         svg.classList.remove('hidden');
         measureBtn.classList.add('active');
         clearMeasureBtn.style.display = 'inline-block';
+        // Make SVG circles have pointer events for deletion
+        svg.style.pointerEvents = 'none';
+        svgCircles.forEach(c => { c.style.pointerEvents = 'auto'; });
         updateMeasureVisuals();
     };
 
-    // Deactivate measure tool
     const deactivateMeasure = () => {
         measureState.active = false;
         canvasContainer.removeEventListener('pointerdown', measurePointerdown);
@@ -416,34 +510,55 @@ const main = async () => {
         measureBtn.classList.remove('active');
     };
 
-    // Tool manager integration
-    events.function('tool.active', () => measureState.active ? 'measure' : null);
-
+    // Override tool.active to include measure
+    const originalToolActive = events.invoke('tool.active');
+    // We need to hook into the tool manager's activate to handle measure tool
+    // Measure tool is NOT registered with ToolManager - we handle it separately
     events.on('tool.measure', () => {
+        // Deactivate any current tool manager tool first
+        const current = events.invoke('tool.active');
+        if (current) {
+            toolManager.activate(null);
+        }
         activateMeasure();
     });
 
     events.on('tool.deactivate', () => {
-        deactivateMeasure();
+        if (measureState.active) {
+            deactivateMeasure();
+        }
+        toolManager.activate(null);
         events.fire('tool.deactivated');
     });
 
     events.on('tool.deactivated', () => {
         measureBtn.classList.remove('active');
+        moveBtn.classList.remove('active');
+        rotateBtn.classList.remove('active');
+        scaleBtn.classList.remove('active');
     });
 
-    // Delete key: delete last point
-    events.on('select.delete', () => {
-        if (measureState.active) {
-            deleteLastMeasurePoint();
-        }
+    // When transform tools activate, deactivate measure
+    events.on('tool.move.activated', () => {
+        if (measureState.active) deactivateMeasure();
+        moveBtn.classList.add('active');
+        rotateBtn.classList.remove('active');
+        scaleBtn.classList.remove('active');
+        measureBtn.classList.remove('active');
     });
-
-    // Shift+C: clear all measure points
-    events.on('measure.clearAll', () => {
-        if (measureState.active) {
-            clearAllMeasurePoints();
-        }
+    events.on('tool.rotate.activated', () => {
+        if (measureState.active) deactivateMeasure();
+        moveBtn.classList.remove('active');
+        rotateBtn.classList.add('active');
+        scaleBtn.classList.remove('active');
+        measureBtn.classList.remove('active');
+    });
+    events.on('tool.scale.activated', () => {
+        if (measureState.active) deactivateMeasure();
+        moveBtn.classList.remove('active');
+        rotateBtn.classList.remove('active');
+        scaleBtn.classList.add('active');
+        measureBtn.classList.remove('active');
     });
 
     // Update measure visuals on each render frame
@@ -455,7 +570,7 @@ const main = async () => {
 
     window.scene = scene;
 
-    // cursor label - show picked point coordinates
+    // cursor label
     let fullprecision = '';
     events.on('camera.focalPointPicked', (details: { position: Vec3 }) => {
         cursorLabel.textContent = `${details.position.x.toFixed(2)}, ${details.position.y.toFixed(2)}, ${details.position.z.toFixed(2)}`;
@@ -484,29 +599,12 @@ const main = async () => {
         if (spinnerCount === 0) spinner.style.display = 'none';
     });
 
-    // show popup (minimal - just alert)
+    // show popup
     events.function('showPopup', async (options: any) => {
         if (options.type === 'error') {
             alert(`${options.header}: ${options.message}`);
         }
         return { action: 'ok' };
-    });
-
-    // selection support (minimal - just track current splat)
-    let currentSplat: any = null;
-    events.function('selection', () => currentSplat);
-    events.on('selection.changed', (splat: any) => {
-        currentSplat = splat;
-    });
-
-    // scene splats helpers
-    events.function('scene.allSplats', () => scene.getElementsByType('splat' as any));
-    events.function('scene.splats', () => {
-        return (scene.getElementsByType('splat' as any) as any[])
-            .filter((s: any) => s.visible && s.numSplats > 0);
-    });
-    events.function('scene.empty', () => {
-        return events.invoke('scene.splats').length === 0;
     });
 
     // ===== FILE UPLOAD =====
@@ -531,10 +629,7 @@ const main = async () => {
                     const model = await scene.assetLoader.load(fn, fileSystem);
                     await scene.add(model);
 
-                    // auto-select the loaded splat
                     events.fire('selection.changed', model);
-
-                    // focus camera on loaded model
                     scene.camera.focus();
                 } catch (error: any) {
                     alert(`Error loading file: ${error.message ?? error}`);
@@ -578,7 +673,6 @@ const main = async () => {
                 }
             }
         } else {
-            // fallback for browsers without showOpenFilePicker
             const fileSelector = document.createElement('input');
             fileSelector.setAttribute('type', 'file');
             fileSelector.setAttribute('accept', '.ply,.splat,.ksplat,.spz');
@@ -609,7 +703,6 @@ const main = async () => {
         })));
     });
 
-    // also show drop overlay
     canvasContainer.addEventListener('dragenter', () => { dropOverlay.classList.add('active'); });
     canvasContainer.addEventListener('dragleave', (e) => {
         if (!canvasContainer.contains(e.relatedTarget as Node)) {
@@ -618,7 +711,7 @@ const main = async () => {
     });
     canvasContainer.addEventListener('drop', () => { dropOverlay.classList.remove('active'); });
 
-    // measure button toggle
+    // ===== TOOL BUTTONS =====
     measureBtn.addEventListener('click', () => {
         if (measureState.active) {
             events.fire('tool.deactivate');
@@ -627,22 +720,115 @@ const main = async () => {
         }
     });
 
-    // clear measure button
     clearMeasureBtn.addEventListener('click', () => {
         clearAllMeasurePoints();
     });
 
-    // initialize canvas size
+    moveBtn.addEventListener('click', () => {
+        if (events.invoke('tool.active') === 'move') {
+            events.fire('tool.deactivate');
+        } else {
+            events.fire('tool.move');
+        }
+    });
+
+    rotateBtn.addEventListener('click', () => {
+        if (events.invoke('tool.active') === 'rotate') {
+            events.fire('tool.deactivate');
+        } else {
+            events.fire('tool.rotate');
+        }
+    });
+
+    scaleBtn.addEventListener('click', () => {
+        if (events.invoke('tool.active') === 'scale') {
+            events.fire('tool.deactivate');
+        } else {
+            events.fire('tool.scale');
+        }
+    });
+
+    // ===== EXPORT =====
+    const doExport = async (format: ExportFormat) => {
+        const splats = events.invoke('scene.splats');
+        if (!splats || splats.length === 0) {
+            alert('No splats to export');
+            return;
+        }
+
+        const firstSplat = splats[0];
+        const filename = (firstSplat.name || 'output').replace(/\.[^.]+$/, '');
+
+        const serializeSettings: SerializeSettings = {
+            maxSHBands: 3
+        };
+
+        events.fire('startSpinner');
+
+        try {
+            await new Promise<void>((resolve) => { setTimeout(resolve); });
+
+            let ext: string;
+            const fs = new BrowserFileSystem(`${filename}${ext = format === 'splat' ? '.splat' : '.ply'}`);
+
+            switch (format) {
+                case 'ply':
+                    await serializePly(splats, serializeSettings, fs);
+                    break;
+                case 'compressedPly':
+                    serializeSettings.minOpacity = 1 / 255;
+                    serializeSettings.removeInvalid = true;
+                    await serializePlyCompressed(splats, serializeSettings, fs);
+                    break;
+                case 'splat':
+                    await serializeSplat(splats, serializeSettings, fs);
+                    break;
+            }
+        } catch (error: any) {
+            alert(`Export error: ${error.message ?? error}`);
+        } finally {
+            events.fire('stopSpinner');
+        }
+    };
+
+    // Export button - toggle dropdown
+    exportBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        exportMenu.style.display = exportMenu.style.display === 'block' ? 'none' : 'block';
+    });
+
+    document.addEventListener('click', () => {
+        exportMenu.style.display = 'none';
+    });
+
+    exportMenu.addEventListener('click', (e) => {
+        e.stopPropagation();
+    });
+
+    document.getElementById('export-ply')!.addEventListener('click', () => {
+        doExport('ply');
+        exportMenu.style.display = 'none';
+    });
+
+    document.getElementById('export-compressed-ply')!.addEventListener('click', () => {
+        doExport('compressedPly');
+        exportMenu.style.display = 'none';
+    });
+
+    document.getElementById('export-splat')!.addEventListener('click', () => {
+        doExport('splat');
+        exportMenu.style.display = 'none';
+    });
+
+    // ===== CANVAS INIT =====
     const pixelRatio = window.devicePixelRatio;
     canvas.width = Math.ceil(canvasContainer.offsetWidth * pixelRatio);
     canvas.height = Math.ceil(canvasContainer.offsetHeight * pixelRatio);
 
-    // prevent context menu
     ['contextmenu', 'gesturestart', 'gesturechange', 'gestureend'].forEach((event) => {
         document.addEventListener(event, (e) => { e.preventDefault(); }, true);
     });
 
-    // focus body on canvas click
     canvasContainer.addEventListener('pointerdown', (event: PointerEvent) => {
         if (event.target === canvas || toolsContainer.contains(event.target as Node)) {
             document.body.focus();
@@ -664,7 +850,7 @@ const registerMinimalEditorEvents = (events: Events, scene: Scene) => {
     [
         'camera.mode', 'camera.overlay', 'camera.splatSize', 'view.outlineSelection',
         'view.centersUseGaussianColor', 'view.bands', 'camera.bound', 'camera.showPoses',
-        'selection.changed', 'tool.coordSpace'
+        'selection.changed', 'tool.coordSpace', 'edit.apply'
     ].forEach((eventName) => {
         events.on(eventName, () => { scene.forceRender = true; });
     });
@@ -846,37 +1032,6 @@ const registerMinimalEditorEvents = (events: Events, scene: Scene) => {
     events.on('scene.clear', () => {
         scene.clear();
     });
-
-    // transform handler stack (stub for compatibility)
-    const transformHandlerStack: any[] = [];
-    events.on('transformHandler.push', (handler: any) => {
-        transformHandlerStack.push(handler);
-        if (handler.activate) handler.activate();
-    });
-    events.on('transformHandler.pop', () => {
-        const handler = transformHandlerStack.pop();
-        if (handler?.deactivate) handler.deactivate();
-    });
-
-    // pivot support (stub - no gizmo movement needed)
-    const pivotTransform = {
-        position: new Vec3(),
-        rotation: null as any,
-        scale: null as any,
-        equals: () => false,
-        copy: () => {},
-        equalsTRS: () => false,
-        set: () => {}
-    };
-    const pivot = {
-        transform: pivotTransform,
-        place: (t: any) => { events.fire('pivot.placed', pivot); },
-        start: () => { events.fire('pivot.started', pivot); },
-        move: (t: any) => { events.fire('pivot.moved', pivot); },
-        moveTRS: (p: Vec3, r: any, s: any) => { events.fire('pivot.moved', pivot); },
-        end: () => { events.fire('pivot.ended', pivot); }
-    };
-    events.function('pivot', () => pivot);
 };
 
 main();

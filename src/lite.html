@@ -95,8 +95,7 @@
             #measure-tool-svg.hidden {
                 display: none;
             }
-            #measure-line { stroke: #ff6600; stroke-width: 2; }
-            #measure-line-start, #measure-line-end { fill: #ff6600; r: 5; }
+            #measure-line { stroke: #ff6600; stroke-width: 3; }
             #drop-overlay {
                 display: none;
                 position: absolute;
@@ -107,10 +106,9 @@
                 pointer-events: none;
             }
             #drop-overlay.active { display: block; }
-            #open-file-btn {
-                position: absolute;
-                top: 12px;
-                left: 12px;
+
+            /* Toolbar buttons */
+            .toolbar-btn {
                 background: rgba(30, 30, 30, 0.85);
                 color: #ccc;
                 border: 1px solid #555;
@@ -120,25 +118,52 @@
                 font-size: 13px;
                 z-index: 10;
             }
-            #open-file-btn:hover {
+            .toolbar-btn:hover {
                 border-color: #f60;
                 color: #fff;
             }
-            #measure-btn {
+            .toolbar-btn.active {
+                background: #f60;
+                color: #fff;
+                border-color: #f60;
+            }
+
+            /* Top toolbar */
+            #top-toolbar {
                 position: absolute;
                 top: 12px;
-                left: 130px;
-                background: rgba(30, 30, 30, 0.85);
-                color: #ccc;
-                border: 1px solid #555;
-                padding: 8px 16px;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 13px;
+                left: 12px;
+                display: flex;
+                gap: 6px;
                 z-index: 10;
             }
-            #measure-btn:hover { border-color: #f60; color: #fff; }
-            #measure-btn.active { background: #f60; color: #fff; border-color: #f60; }
+
+            /* Export dropdown */
+            #export-menu {
+                display: none;
+                position: absolute;
+                top: 100%;
+                left: 0;
+                margin-top: 4px;
+                background: rgba(30, 30, 30, 0.95);
+                border: 1px solid #555;
+                border-radius: 4px;
+                overflow: hidden;
+                min-width: 160px;
+                z-index: 20;
+            }
+            #export-menu div {
+                padding: 8px 16px;
+                cursor: pointer;
+                color: #ccc;
+                font-size: 13px;
+                white-space: nowrap;
+            }
+            #export-menu div:hover {
+                background: #f60;
+                color: #fff;
+            }
+
             #spinner {
                 display: none;
                 position: absolute;
@@ -165,9 +190,25 @@
             <div id="drop-overlay"></div>
             <div id="spinner"></div>
         </div>
-        <button id="open-file-btn">Open File</button>
-        <button id="measure-btn">Measure</button>
-        <button id="clear-measure-btn" style="display:none;position:absolute;top:12px;left:248px;background:rgba(30,30,30,0.85);color:#ccc;border:1px solid #555;padding:8px 16px;border-radius:4px;cursor:pointer;font-size:13px;z-index:10;">Clear All</button>
+
+        <!-- Top toolbar -->
+        <div id="top-toolbar">
+            <button id="open-file-btn" class="toolbar-btn">Open</button>
+            <div style="position:relative;">
+                <button id="export-btn" class="toolbar-btn">Export</button>
+                <div id="export-menu">
+                    <div id="export-ply">PLY</div>
+                    <div id="export-compressed-ply">Compressed PLY</div>
+                    <div id="export-splat">Splat</div>
+                </div>
+            </div>
+            <button id="move-btn" class="toolbar-btn" title="Move (1)">Move</button>
+            <button id="rotate-btn" class="toolbar-btn" title="Rotate (2)">Rotate</button>
+            <button id="scale-btn" class="toolbar-btn" title="Scale (3)">Scale</button>
+            <button id="measure-btn" class="toolbar-btn" title="Measure">Measure</button>
+            <button id="clear-measure-btn" class="toolbar-btn" style="display:none;">Clear All</button>
+        </div>
+
         <script type="module" src="./lite.js"></script>
     </body>
 </html>
