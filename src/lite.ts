@@ -241,20 +241,9 @@ const main = async () => {
 
     const ns = svg.namespaceURI!;
 
-    // Create defs
-    const defs = document.createElementNS(ns, 'defs');
-
-    // Line template - thicker for better visibility
-    const lineTemplate = document.createElementNS(ns, 'line') as SVGLineElement;
-    lineTemplate.id = 'measure-line';
-    lineTemplate.setAttribute('stroke', '#ff6600');
-    lineTemplate.setAttribute('stroke-width', '3');
-    defs.appendChild(lineTemplate);
-
-    svg.appendChild(defs);
-
     // Dynamic SVG elements
-    const svgLines: SVGUseElement[] = [];
+    const svgLinesBottom: SVGLineElement[] = [];  // bottom layer (black, thick)
+    const svgLinesTop: SVGLineElement[] = [];      // top layer (white, thin)
     const svgCircles: SVGCircleElement[] = [];
     const svgLabels: SVGTextElement[] = [];
     const svgHitAreas: SVGRectElement[] = [];  // transparent hit areas for hover detection
@@ -304,15 +293,29 @@ const main = async () => {
             svg.removeChild(h);
         }
 
-        // Lines between consecutive points
-        while (svgLines.length < lineCount) {
-            const lineUse = document.createElementNS(ns, 'use') as SVGUseElement;
-            lineUse.setAttribute('href', '#measure-line');
-            svg.appendChild(lineUse);
-            svgLines.push(lineUse);
+        // Lines between consecutive points - bottom layer (black, thick, drawn first)
+        while (svgLinesBottom.length < lineCount) {
+            const line = document.createElementNS(ns, 'line') as SVGLineElement;
+            line.setAttribute('stroke', '#000');
+            line.setAttribute('stroke-width', '6');
+            svg.appendChild(line);
+            svgLinesBottom.push(line);
         }
-        while (svgLines.length > lineCount) {
-            const l = svgLines.pop()!;
+        while (svgLinesBottom.length > lineCount) {
+            const l = svgLinesBottom.pop()!;
+            svg.removeChild(l);
+        }
+
+        // Lines between consecutive points - top layer (white, thin, drawn on top)
+        while (svgLinesTop.length < lineCount) {
+            const line = document.createElementNS(ns, 'line') as SVGLineElement;
+            line.setAttribute('stroke', '#fff');
+            line.setAttribute('stroke-width', '2');
+            svg.appendChild(line);
+            svgLinesTop.push(line);
+        }
+        while (svgLinesTop.length > lineCount) {
+            const l = svgLinesTop.pop()!;
             svg.removeChild(l);
         }
 
@@ -366,11 +369,19 @@ const main = async () => {
             const screenA = worldToScreen(measureState.points[i]);
             const screenB = worldToScreen(measureState.points[i + 1]);
             if (screenA && screenB) {
-                svgLines[i].setAttribute('x1', screenA.x.toString());
-                svgLines[i].setAttribute('y1', screenA.y.toString());
-                svgLines[i].setAttribute('x2', screenB.x.toString());
-                svgLines[i].setAttribute('y2', screenB.y.toString());
-                svgLines[i].setAttribute('visibility', 'visible');
+                // Update bottom layer (black, thick)
+                svgLinesBottom[i].setAttribute('x1', screenA.x.toString());
+                svgLinesBottom[i].setAttribute('y1', screenA.y.toString());
+                svgLinesBottom[i].setAttribute('x2', screenB.x.toString());
+                svgLinesBottom[i].setAttribute('y2', screenB.y.toString());
+                svgLinesBottom[i].setAttribute('visibility', 'visible');
+
+                // Update top layer (white, thin)
+                svgLinesTop[i].setAttribute('x1', screenA.x.toString());
+                svgLinesTop[i].setAttribute('y1', screenA.y.toString());
+                svgLinesTop[i].setAttribute('x2', screenB.x.toString());
+                svgLinesTop[i].setAttribute('y2', screenB.y.toString());
+                svgLinesTop[i].setAttribute('visibility', 'visible');
 
                 // Distance label at midpoint
                 const dist = measureState.points[i].distance(measureState.points[i + 1]);
@@ -397,7 +408,8 @@ const main = async () => {
                     svgHitAreas[i].style.pointerEvents = 'fill';
                 }
             } else {
-                svgLines[i].setAttribute('visibility', 'hidden');
+                svgLinesBottom[i].setAttribute('visibility', 'hidden');
+                svgLinesTop[i].setAttribute('visibility', 'hidden');
                 svgLabels[i].setAttribute('visibility', 'hidden');
                 svgHitAreas[i].style.pointerEvents = 'none';
             }
