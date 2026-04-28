@@ -44,7 +44,8 @@ class Underlay extends Element {
             }
 
             this.renderPass.execute({
-                srcTexture: camera.workTarget.colorBuffer
+                srcTexture: camera.workTarget.colorBuffer,
+                uResolution: [this.scene.graphicsDevice.width, this.scene.graphicsDevice.height]
             });
         });
     }

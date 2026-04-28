@@ -12,7 +12,7 @@ const sceneConfig = {
     unselectedClr: DEFAULT_UNSELECTED_CLR,
     lockedClr: DEFAULT_LOCKED_CLR,
     camera: {
-        pixelScale: 1,
+        pixelScale:3,
         multisample: false,
         fov: 75,
         exposure: 1.0,

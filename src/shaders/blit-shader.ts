@@ -7,9 +7,11 @@ const vertexShader = /* glsl*/ `
 
 const fragmentShader = /* glsl*/ `
     uniform sampler2D srcTexture;
+    uniform vec2 uResolution;
+    uniform vec2 uSrcSize;
     void main(void) {
-        ivec2 texel = ivec2(gl_FragCoord.xy);
-        gl_FragColor = texelFetch(srcTexture, texel, 0);
+        vec2 uv = gl_FragCoord.xy / uResolution;
+        gl_FragColor = texture2D(srcTexture, uv);
     }
 `;
 

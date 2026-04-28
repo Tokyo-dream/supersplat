@@ -316,7 +316,8 @@ class Camera extends Element {
             new ShaderQuad(device, vertexShader, fragmentShader, 'final-blit'), {
                 vars: () => {
                     return {
-                        srcTexture: this.mainTarget.colorBuffer
+                        srcTexture: this.mainTarget.colorBuffer,
+                        uResolution: [this.scene.graphicsDevice.width, this.scene.graphicsDevice.height]
                     };
                 }
             });
