@@ -1,0 +1,101 @@
+一、概述
+----------------------------------------------------------------
+lite.ts 提供 3D 高斯泼溅（Gaussian Splat）
+模型的查看、变换、测量和导出功能，无需完整编辑器环境。
+
+二、场景配置（scene-config.ts）
+----------------------------------------------------------------
+通过 URL 参数或代码可覆盖以下默认配置：
+
+[颜色]
+  bgClr            背景色                默认: 0,0,0,1 (黑)
+  selectedClr      选中色                默认: 1,1,0,1 (黄)
+  unselectedClr    未选中色              默认: 0,0,1,0.5 (半透明蓝)
+  lockedClr        锁定色                默认: 0,0,0,0.05
+
+[相机]
+  camera.pixelScale   渲染像素缩放      默认: 1
+                      值>1 降低分辨率提升性能
+                      值<1 超采样提高清晰度
+  camera.multisample   多重采样抗锯齿    默认: false (预留)
+  camera.fov          视场角(度)         默认: 75
+  camera.exposure     曝光度             默认: 1.0
+  camera.toneMapping  色调映射           默认: linear
+                      可选: linear/filmic/hejl/aces/aces2/neutral
+  camera.overlay      叠加层模式         默认: false
+
+[显示]
+  show.grid           显示网格           默认: true
+  show.bound          显示包围盒         默认: true
+  show.cameraPoses    显示相机位姿       默认: false
+  show.shBands        球谐波段数         默认: 3
+
+[控制器]
+  controls.dampingFactor    阻尼系数           默认: 0.2
+  controls.minPolarAngle    最小极角(弧度)     默认: 0
+  controls.maxPolarAngle    最大极角(弧度)     默认: PI
+  controls.minZoom          最小缩放           默认: 1e-6
+  controls.maxZoom          最大缩放           默认: 10.0
+  controls.initialAzim     初始方位角(度)      默认: -45
+  controls.initialElev     初始仰角(度)        默认: -10
+  controls.initialZoom     初始缩放            默认: 1.0
+  controls.orbitSensitivity  轨道灵敏度        默认: 0.3
+  controls.zoomSensitivity   缩放灵敏度        默认: 0.4
+
+[调试]
+  debug.showBound       显示包围盒调试     默认: false
+
+三、快捷键
+----------------------------------------------------------------
+[相机控制]
+  W/A/S/D/Q/E     飞行模式: 前/左/后/右/下/上
+  Shift (按住)     飞行加速
+  Alt   (按住)     飞行减速
+  G               切换网格显示
+
+[变换工具]
+  1               移动工具
+  2               旋转工具
+  3               缩放工具
+
+四、鼠标操作
+----------------------------------------------------------------
+[轨道模式]
+  左键拖拽        旋转视角
+  右键拖拽        平移视角
+  滚轮            缩放
+
+[飞行模式]
+  左键拖拽        视角朝向
+  右键拖拽        平移
+  WASD+QE         移动
+
+五、工具栏功能
+----------------------------------------------------------------
+  Open            打开文件(.ply/.splat/.ksplat/.spz)
+  Export          导出(PLY/压缩PLY/Splat)
+  Move            移动工具
+  Rotate          旋转工具
+  Scale           缩放工具
+  Measure         测量工具(多点连线)
+  Clear All       清除所有测量点
+
+六、测量工具
+----------------------------------------------------------------
+  - 点击场景添加测量点，自动连线并显示距离
+  - 点击已有点可选中(橙色高亮)
+  - 再次点击选中点可删除
+  - 线段悬停显示精确距离标签
+  - 相机背后的点自动隐藏，避免投影异常
+
+七、文件操作
+----------------------------------------------------------------
+  支持格式: .ply / .splat / .ksplat / .spz / .sog
+  
+  导入方式:
+    - 点击 Open 按钮选择文件
+
+  导出格式:
+    - PLY              标准点云格式
+    - Compressed PLY   压缩PLY(去除无效点，最低不透明度1/255)
+    - Splat            PlayCanvas splat格式

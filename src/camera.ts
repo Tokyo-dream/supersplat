@@ -275,16 +275,32 @@ class Camera extends Element {
     }
 
     // transform the world space coordinate to normalized screen coordinate
-    worldToScreen(world: Vec3, screen: Vec3) {
+    // returns false if the point is behind the camera or outside the near plane
+    worldToScreen(world: Vec3, screen: Vec3): boolean {
         const { camera } = this;
         m.mul2(camera.projectionMatrix, camera.viewMatrix);
 
         v4.set(world.x, world.y, world.z, 1);
         m.transformVec4(v4, v4);
 
-        screen.x = v4.x / v4.w * 0.5 + 0.5;
-        screen.y = 1.0 - (v4.y / v4.w * 0.5 + 0.5);
-        screen.z = v4.z / v4.w;
+        // point is behind the camera
+        if (v4.w <= 0) {
+            return false;
+        }
+
+        const nx = v4.x / v4.w * 0.5 + 0.5;
+        const ny = 1.0 - (v4.y / v4.w * 0.5 + 0.5);
+        const nz = v4.z / v4.w;
+
+        // point is outside the near/far plane (very close to camera produces extreme projections)
+        if (nz < -1 || nz > 1) {
+            return false;
+        }
+
+        screen.x = nx;
+        screen.y = ny;
+        screen.z = nz;
+        return true;
     }
 
     add() {

@@ -108,7 +108,10 @@ class MeasureTool {
 
         const getPoint2d = (index: number, result: Vec3) => {
             getPoint(index, result);
-            scene.camera.worldToScreen(result, result);
+            if (!scene.camera.worldToScreen(result, result)) {
+                result.x = -Infinity;
+                result.y = -Infinity;
+            }
             result.x *= canvasContainer.dom.clientWidth;
             result.y *= canvasContainer.dom.clientHeight;
         };
@@ -332,11 +335,29 @@ class MeasureTool {
 
         events.on('postrender', () => {
             if (active && splat) {
-                line.setAttribute('visibility', splat.measurePoints.length > 1 ? 'visible' : 'hidden');
+                // track visibility of each point
+                const visible = [true, true];
 
                 for (let i = 0; i < 2; i++) {
                     if (i < splat.measurePoints.length) {
                         getPoint2d(i, p);
+
+                        // point is behind camera
+                        if (p.x === -Infinity || p.y === -Infinity) {
+                            visible[i] = false;
+                            if (i === 0) {
+                                lineStart.setAttribute('cx', '0');
+                                lineStart.setAttribute('cy', '0');
+                                lineStart.setAttribute('visibility', 'hidden');
+                                lineStart.style.pointerEvents = 'none';
+                            } else {
+                                lineEnd.setAttribute('cx', '0');
+                                lineEnd.setAttribute('cy', '0');
+                                lineEnd.setAttribute('visibility', 'hidden');
+                                lineEnd.style.pointerEvents = 'none';
+                            }
+                            continue;
+                        }
 
                         const x = p.x.toString();
                         const y = p.y.toString();
@@ -348,25 +369,55 @@ class MeasureTool {
                             lineStart.setAttribute('cy', y);
 
                             lineStart.setAttribute('visibility', 'visible');
+                            lineStart.style.pointerEvents = 'auto';
                         } else if (i === 1) {
                             line.setAttribute('x2', x);
                             line.setAttribute('y2', y);
                             lineEnd.setAttribute('cx', x);
                             lineEnd.setAttribute('cy', y);
                             lineEnd.setAttribute('visibility', 'visible');
+                            lineEnd.style.pointerEvents = 'auto';
                         }
                     } else {
+                        visible[i] = false;
                         if (i === 0) {
+                            lineStart.setAttribute('cx', '0');
+                            lineStart.setAttribute('cy', '0');
                             lineStart.setAttribute('visibility', 'hidden');
+                            lineStart.style.pointerEvents = 'none';
                         } else {
+                            lineEnd.setAttribute('cx', '0');
+                            lineEnd.setAttribute('cy', '0');
                             lineEnd.setAttribute('visibility', 'hidden');
+                            lineEnd.style.pointerEvents = 'none';
                         }
                     }
                 }
+
+                // only show line if both points are visible
+                if (splat.measurePoints.length > 1 && visible[0] && visible[1]) {
+                    line.setAttribute('visibility', 'visible');
+                } else {
+                    line.setAttribute('x1', '0');
+                    line.setAttribute('y1', '0');
+                    line.setAttribute('x2', '0');
+                    line.setAttribute('y2', '0');
+                    line.setAttribute('visibility', 'hidden');
+                }
             } else {
+                line.setAttribute('x1', '0');
+                line.setAttribute('y1', '0');
+                line.setAttribute('x2', '0');
+                line.setAttribute('y2', '0');
                 line.setAttribute('visibility', 'hidden');
+                lineStart.setAttribute('cx', '0');
+                lineStart.setAttribute('cy', '0');
                 lineStart.setAttribute('visibility', 'hidden');
+                lineStart.style.pointerEvents = 'none';
+                lineEnd.setAttribute('cx', '0');
+                lineEnd.setAttribute('cy', '0');
                 lineEnd.setAttribute('visibility', 'hidden');
+                lineEnd.style.pointerEvents = 'none';
             }
         });
 

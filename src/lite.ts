@@ -344,7 +344,9 @@ const main = async () => {
     // Project 3D world point to 2D screen coordinates
     const tmpVec = new Vec3();
     const worldToScreen = (worldPos: Vec3): { x: number, y: number } | null => {
-        scene.camera.worldToScreen(worldPos, tmpVec);
+        if (!scene.camera.worldToScreen(worldPos, tmpVec)) {
+            return null;
+        }
         return {
             x: tmpVec.x * canvasContainer.clientWidth,
             y: tmpVec.y * canvasContainer.clientHeight
@@ -360,8 +362,12 @@ const main = async () => {
                 svgCircles[i].setAttribute('cx', screen.x.toString());
                 svgCircles[i].setAttribute('cy', screen.y.toString());
                 svgCircles[i].setAttribute('visibility', 'visible');
+                svgCircles[i].style.pointerEvents = 'auto';
             } else {
+                svgCircles[i].setAttribute('cx', '0');
+                svgCircles[i].setAttribute('cy', '0');
                 svgCircles[i].setAttribute('visibility', 'hidden');
+                svgCircles[i].style.pointerEvents = 'none';
             }
         }
 
@@ -408,7 +414,15 @@ const main = async () => {
                     svgHitAreas[i].style.pointerEvents = 'fill';
                 }
             } else {
+                svgLinesBottom[i].setAttribute('x1', '0');
+                svgLinesBottom[i].setAttribute('y1', '0');
+                svgLinesBottom[i].setAttribute('x2', '0');
+                svgLinesBottom[i].setAttribute('y2', '0');
                 svgLinesBottom[i].setAttribute('visibility', 'hidden');
+                svgLinesTop[i].setAttribute('x1', '0');
+                svgLinesTop[i].setAttribute('y1', '0');
+                svgLinesTop[i].setAttribute('x2', '0');
+                svgLinesTop[i].setAttribute('y2', '0');
                 svgLinesTop[i].setAttribute('visibility', 'hidden');
                 svgLabels[i].setAttribute('visibility', 'hidden');
                 svgHitAreas[i].style.pointerEvents = 'none';
